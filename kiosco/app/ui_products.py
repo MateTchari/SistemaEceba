@@ -1,16 +1,15 @@
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
-    QTableWidget, QTableWidgetItem, QMessageBox, QCheckBox
+    QTableWidget, QTableWidgetItem, QMessageBox, QCheckBox, QInputDialog
 )
-from PySide6.QtCore import Qt
-
-from app.services import buscar_productos, crear_producto, actualizar_producto, set_activo
-from app.ui_product_form import ProductFormDialog
-from PySide6.QtGui import QColor
 
 from app.services import buscar_productos, crear_producto, actualizar_producto, set_activo, eliminar_producto
+from app.ui_product_form import ProductFormDialog
+
 
 def money_to_centavos(text: str) -> int:
     s = text.strip().replace(",", ".")
@@ -29,10 +28,14 @@ def centavos_to_money_str(c: int) -> str:
 
 
 class ProductsDialog(QDialog):
+    ADMIN_PASSWORD = "ECEBAADMIN123"
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Administrar productos")
         self.setMinimumSize(950, 550)
+
+        self._is_admin = False  # ✅ importante: sesión admin
 
         root = QVBoxLayout(self)
 
@@ -54,14 +57,14 @@ class ProductsDialog(QDialog):
         self.btn_refresh.clicked.connect(self.refresh)
         top.addWidget(self.btn_refresh)
 
-        # Table (agrego columna Imagen para que se vea si tiene o no)
+        # Tabla
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(["ID", "Nombre", "Precio", "Stock", "Activo", "Imagen"])
         self.table.setSelectionBehavior(self.table.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(self.table.EditTrigger.NoEditTriggers)
         root.addWidget(self.table, 1)
 
-        # Buttons
+        # Botones
         btns = QHBoxLayout()
         root.addLayout(btns)
 
@@ -82,6 +85,28 @@ class ProductsDialog(QDialog):
 
         self.refresh()
 
+    def require_admin(self) -> bool:
+        """Pide contraseña una vez por sesión de esta ventana."""
+        if self._is_admin:
+            return True
+
+        text, ok = QInputDialog.getText(
+            self,
+            "Acceso de administrador",
+            "Ingresá la contraseña para administrar productos:",
+            QLineEdit.EchoMode.Password,
+        )
+
+        if not ok:
+            return False
+
+        if text == self.ADMIN_PASSWORD:
+            self._is_admin = True
+            return True
+
+        QMessageBox.warning(self, "Contraseña incorrecta", "La contraseña ingresada no es válida.")
+        return False
+
     def selected_product_row(self):
         items = self.table.selectedItems()
         if not items:
@@ -99,22 +124,16 @@ class ProductsDialog(QDialog):
         incluir = self.chk_inactivos.isChecked()
         productos = buscar_productos(q, incluir_inactivos=incluir)
 
-                # 🎯 Orden personalizado:
-        # 1) Activos primero
-        # 2) Dentro de activos: verde, naranja, rojo
-        # 3) Inactivos al final
-
+        # Orden: verdes, naranjas, rojos, inactivos
         def prioridad(p):
             if p.activo == 0:
-                return (3, 0)  # último grupo
-
-            # Activos
+                return (3, 0)
             if p.stock >= 20:
-                return (0, -p.stock)  # verdes arriba
+                return (0, -p.stock)
             elif p.stock >= 10:
-                return (1, -p.stock)  # naranjas
+                return (1, -p.stock)
             else:
-                return (2, -p.stock)  # rojos
+                return (2, -p.stock)
 
         productos.sort(key=prioridad)
 
@@ -128,29 +147,31 @@ class ProductsDialog(QDialog):
             self.table.setItem(row, 2, QTableWidgetItem(centavos_to_money_str(p.precio_centavos)))
             self.table.setItem(row, 3, QTableWidgetItem(str(p.stock)))
             self.table.setItem(row, 4, QTableWidgetItem("Sí" if p.activo == 1 else "No"))
-            self.table.setItem(row, 5, QTableWidgetItem("Sí" if (getattr(p, "imagen_path", None)) else "No"))
+            self.table.setItem(row, 5, QTableWidgetItem("Sí" if getattr(p, "imagen_path", None) else "No"))
 
-              # 🎨 Colores por estado (prioridad: inactivo > stock)
+            # Colores (inactivo > stock)
             if p.activo == 0:
-                bg = QColor(210, 210, 210)  # gris
+                bg = QColor(210, 210, 210)
                 fg = QColor(110, 110, 110)
                 for col in range(self.table.columnCount()):
                     self.table.item(row, col).setBackground(bg)
                     self.table.item(row, col).setForeground(fg)
-
             else:
-                # Activo: colores por stock
                 if p.stock < 10:
                     bg = QColor(255, 120, 120)  # rojo
                 elif p.stock < 20:
                     bg = QColor(255, 200, 120)  # naranja
                 else:
                     bg = QColor(170, 235, 170)  # verde
-
                 for col in range(self.table.columnCount()):
                     self.table.item(row, col).setBackground(bg)
 
+        self.table.resizeColumnsToContents()
+
     def add_product(self):
+        if not self.require_admin():
+            return
+
         dlg = ProductFormDialog(self, title="Agregar producto")
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result_data:
             d = dlg.result_data
@@ -161,6 +182,9 @@ class ProductsDialog(QDialog):
                 QMessageBox.critical(self, "Error", str(e))
 
     def edit_product(self):
+        if not self.require_admin():
+            return
+
         pid = self.selected_product_id()
         row = self.selected_product_row()
         if pid is None or row is None:
@@ -172,7 +196,7 @@ class ProductsDialog(QDialog):
             "precio_centavos": money_to_centavos(self.table.item(row, 2).text()),
             "stock": int(self.table.item(row, 3).text()),
             "activo": 1 if self.table.item(row, 4).text() == "Sí" else 0,
-            "imagen_path": None,  # si querés exacto, lo ideal es traerlo de DB por id
+            "imagen_path": None,
         }
 
         dlg = ProductFormDialog(self, title=f"Editar producto #{pid}", initial=initial)
@@ -184,23 +208,11 @@ class ProductsDialog(QDialog):
             except Exception as e:
                 QMessageBox.critical(self, "Error", str(e))
 
-    def toggle_active(self):
-        pid = self.selected_product_id()
-        row = self.selected_product_row()
-        if pid is None or row is None:
-            QMessageBox.information(self, "Atención", "Seleccioná un producto.")
-            return
-
-        activo = 1 if self.table.item(row, 4).text() == "Sí" else 0
-        nuevo = 0 if activo == 1 else 1
-
-        try:
-            set_activo(pid, nuevo)
-            self.refresh()
-        except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
 
     def delete_product(self):
+        if not self.require_admin():
+            return
+
         pid = self.selected_product_id()
         row = self.selected_product_row()
         if pid is None or row is None:
@@ -212,7 +224,7 @@ class ProductsDialog(QDialog):
         confirm = QMessageBox.question(
             self,
             "Confirmar eliminación",
-            f"¿Eliminar '{nombre}' (ID {pid})?\n\nSi el producto ya tiene ventas, no se podrá eliminar.",
+            f"¿Eliminar '{nombre}' (ID {pid})?\n\nSi el producto ya tiene ventas, se archivará (quedará inactivo).",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
 

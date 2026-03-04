@@ -1,22 +1,45 @@
+from __future__ import annotations
+
 import sqlite3
+import sys
 from pathlib import Path
 
-# Si tu estructura es: SistemaEceba/kiosco/app/db.py
-# y querés DB en: SistemaEceba/kiosco/data/kiosco.db  -> parents[1]
-DB_PATH = Path(__file__).resolve().parents[1] / "data" / "kiosco.db"
+
+def app_base_dir() -> Path:
+    """
+    EXE (PyInstaller): carpeta donde está el .exe (portátil)
+    Dev: carpeta kiosco/ (porque db.py está en kiosco/app/db.py)
+    """
+    if getattr(sys, "frozen", False) and hasattr(sys, "executable"):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[1]  # kiosco/
+
+
+def db_path() -> Path:
+    base = app_base_dir()
+    p = base / "data" / "kiosco.db"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+# ✅ Compatibilidad con tu código existente (backup.py importaba DB_PATH)
+DB_PATH = db_path()
 
 
 def get_conn() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    DB_PATH.touch(exist_ok=True)  # fuerza a que exista el archivo
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
 
 def init_db() -> None:
+    """
+    Crea tablas si no existen y aplica migración simple (imagen_path).
+    Llamar 1 vez al inicio del programa.
+    """
     with get_conn() as conn:
+        # productos
         conn.execute("""
         CREATE TABLE IF NOT EXISTS productos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,6 +50,12 @@ def init_db() -> None:
         );
         """)
 
+        # migración: imagen_path
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(productos);").fetchall()]
+        if "imagen_path" not in cols:
+            conn.execute("ALTER TABLE productos ADD COLUMN imagen_path TEXT;")
+
+        # ventas
         conn.execute("""
         CREATE TABLE IF NOT EXISTS ventas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,6 +66,7 @@ def init_db() -> None:
         );
         """)
 
+        # items
         conn.execute("""
         CREATE TABLE IF NOT EXISTS venta_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,22 +79,5 @@ def init_db() -> None:
             FOREIGN KEY (producto_id) REFERENCES productos(id)
         );
         """)
-        
-def init_db() -> None:
-    with get_conn() as conn:
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS productos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre TEXT NOT NULL,
-            precio_centavos INTEGER NOT NULL CHECK(precio_centavos >= 0),
-            stock INTEGER NOT NULL CHECK(stock >= 0),
-            activo INTEGER NOT NULL DEFAULT 1 CHECK(activo IN (0,1))
-        );
-        """)
 
-        # ---- MIGRACIÓN SIMPLE: agregar imagen_path si falta ----
-        cols = [r["name"] for r in conn.execute("PRAGMA table_info(productos);").fetchall()]
-        if "imagen_path" not in cols:
-            conn.execute("ALTER TABLE productos ADD COLUMN imagen_path TEXT;")
-
-        # ... (ventas y venta_items igual que antes)
+        conn.commit()

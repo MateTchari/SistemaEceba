@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QSpinBox,
-    QPushButton, QHBoxLayout, QFileDialog, QMessageBox, QCheckBox
+    QPushButton, QHBoxLayout, QFileDialog, QMessageBox, QCheckBox, QLabel
 )
-from pathlib import Path
-from uuid import uuid4
-import shutil
+
 
 def money_to_centavos(text: str) -> int:
     s = text.strip().replace(",", ".")
@@ -19,29 +19,10 @@ def money_to_centavos(text: str) -> int:
         return int(a) * 100 + int(b)
     return int(s) * 100
 
+
 def centavos_to_money_str(c: int) -> str:
     return f"{c/100:.2f}".replace(".", ",")
 
-def project_root() -> Path:
-    # ui_product_form.py está en kiosco/app/
-    # parents[1] => kiosco/
-    return Path(__file__).resolve().parents[1]
-
-
-def copy_image_to_project(original_path: str) -> str:
-    src = Path(original_path)
-    if not src.exists():
-        raise ValueError("La imagen seleccionada no existe.")
-
-    images_dir = project_root() / "images"
-    images_dir.mkdir(parents=True, exist_ok=True)
-
-    ext = src.suffix.lower() if src.suffix else ".png"
-    new_name = f"prod_{uuid4().hex}{ext}"
-    dst = images_dir / new_name
-
-    shutil.copy2(src, dst)
-    return str(dst)
 
 class ProductFormDialog(QDialog):
     def __init__(self, parent=None, *, title="Producto", initial=None):
@@ -49,7 +30,8 @@ class ProductFormDialog(QDialog):
         self.setWindowTitle(title)
         self.setMinimumWidth(420)
 
-        self.result_data = None  # dict con campos
+        self.result_data = None
+        self._picked_image_path: str | None = None  # ✅ solo si elige una nueva
 
         lay = QVBoxLayout(self)
         form = QFormLayout()
@@ -70,13 +52,13 @@ class ProductFormDialog(QDialog):
         self.chk_activo.setChecked(True)
         form.addRow("", self.chk_activo)
 
-        # Imagen
+        # Imagen (solo seleccionar, NO copiar acá)
         img_row = QHBoxLayout()
-        self.in_imagen = QLineEdit()
-        self.in_imagen.setPlaceholderText("Ruta de imagen (opcional)")
-        self.btn_browse = QPushButton("Elegir...")
+        self.lbl_imagen = QLabel("(sin imagen)")
+        self.lbl_imagen.setStyleSheet("color:#374151;")
+        self.btn_browse = QPushButton("Elegir imagen...")
         self.btn_browse.clicked.connect(self.pick_image)
-        img_row.addWidget(self.in_imagen, 1)
+        img_row.addWidget(self.lbl_imagen, 1)
         img_row.addWidget(self.btn_browse)
         form.addRow("Imagen", img_row)
 
@@ -93,12 +75,16 @@ class ProductFormDialog(QDialog):
         btns.addWidget(self.btn_ok)
 
         # Cargar datos iniciales si es edición
+        self._initial_imagen_path = None
         if initial:
             self.in_nombre.setText(initial.get("nombre", ""))
             self.in_precio.setText(centavos_to_money_str(initial.get("precio_centavos", 0)))
             self.in_stock.setValue(int(initial.get("stock", 0)))
             self.chk_activo.setChecked(bool(initial.get("activo", 1)))
-            self.in_imagen.setText(initial.get("imagen_path") or "")
+
+            self._initial_imagen_path = initial.get("imagen_path")
+            if self._initial_imagen_path:
+                self.lbl_imagen.setText(Path(self._initial_imagen_path).name)
 
     def pick_image(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -108,11 +94,8 @@ class ProductFormDialog(QDialog):
             "Imágenes (*.png *.jpg *.jpeg *.webp)"
         )
         if path:
-            try:
-                new_path = copy_image_to_project(path)
-                self.in_imagen.setText(new_path)
-            except Exception as e:
-                QMessageBox.warning(self, "Atención", str(e))
+            self._picked_image_path = path
+            self.lbl_imagen.setText(Path(path).name)
 
     def on_ok(self):
         try:
@@ -122,7 +105,11 @@ class ProductFormDialog(QDialog):
             precio_centavos = money_to_centavos(self.in_precio.text())
             stock = int(self.in_stock.value())
             activo = 1 if self.chk_activo.isChecked() else 0
-            imagen_path = self.in_imagen.text().strip() or None
+
+            # ✅ clave:
+            # - si eligió imagen nueva => mandamos esa ruta (services la copia a images/)
+            # - si NO eligió => mandamos None para NO pisar la imagen existente
+            imagen_path = self._picked_image_path
 
             self.result_data = {
                 "nombre": nombre,

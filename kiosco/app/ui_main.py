@@ -1,40 +1,35 @@
 from __future__ import annotations
 
 from typing import Dict
+from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QListWidget, QListWidgetItem, QMessageBox, QLineEdit, QGridLayout
 )
 
 from app.services import listar_productos_activos, CartItem, Producto
-from app.ui_checkout import CheckoutDialog
 from app.services import registrar_venta
-
-from PySide6.QtWidgets import QDialog
-
 from app.ui_products import ProductsDialog
-
-from PySide6.QtGui import QIcon, QPixmap
-from pathlib import Path
 from app.ui_sales import SalesHistoryDialog
-from PySide6.QtGui import QPixmap
-from pathlib import Path
 
-from app.watermark_widget import WatermarkWidget
 
 def money_str(centavos: int) -> str:
-    return f"${centavos/100:.2f}".replace(".", ",")
+    pesos = centavos // 100
+    return f"${pesos:,}".replace(",", ".")
 
 
-class MainWindow(WatermarkWidget):
+class MainWindow(QWidget):
     def __init__(self):
+        super().__init__()
+
+        # Fondo blanco + header con logo
         logo_path = Path(__file__).resolve().parents[1] / "assets" / "logo.png"
-        super().__init__(watermark_path=logo_path, opacity=0.07, veil=0.22)
 
         self.setStyleSheet("""
-QWidget { font-family: Segoe UI; font-size: 12px; }
+QWidget { background: white; font-family: Segoe UI; font-size: 12px; }
 QPushButton {
     background: #0B8EC5;
     color: white;
@@ -70,7 +65,31 @@ QHeaderView::section {
 
         self.carrito: Dict[int, CartItem] = {}
 
-        root = QHBoxLayout(self)
+        # Layout principal: header + contenido
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 8, 10, 10)
+        outer.setSpacing(8)
+
+        # Header (franjita)
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+
+        self.logo_lbl = QLabel()
+        pix = QPixmap(str(logo_path))
+        if not pix.isNull():
+            self.logo_lbl.setPixmap(pix.scaledToHeight(44, Qt.SmoothTransformation))
+        header.addWidget(self.logo_lbl, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        self.title_lbl = QLabel("Sistema Kiosco ECEBA")
+        self.title_lbl.setStyleSheet("font-size: 16px; font-weight: 700;")
+        header.addWidget(self.title_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        header.addStretch(1)
+        outer.addLayout(header)
+
+        # Contenido (productos + carrito)
+        root = QHBoxLayout()
+        outer.addLayout(root, 1)
 
         # Izquierda: productos (grid de botones)
         left = QVBoxLayout()
@@ -78,7 +97,6 @@ QHeaderView::section {
         left.setSpacing(6)
         root.addLayout(left, 3)  # le doy más peso a productos
 
-        # Eliminamos el label grande o lo hacemos más chico
         self.lbl_prod = QLabel("Productos")
         self.lbl_prod.setStyleSheet("font-size: 14px; font-weight: 600;")
         left.addWidget(self.lbl_prod, 0, Qt.AlignmentFlag.AlignTop)
@@ -101,7 +119,7 @@ QHeaderView::section {
         self.cart_list.itemDoubleClicked.connect(self.sub_one_from_item)
         right.addWidget(self.cart_list, 1)
 
-        self.lbl_total = QLabel("Total: $0,00")
+        self.lbl_total = QLabel("Total: $0")
         self.lbl_total.setStyleSheet("font-size: 20px; font-weight: 700;")
         right.addWidget(self.lbl_total)
 
@@ -141,7 +159,6 @@ QHeaderView::section {
         r = c = 0
         for p in self.productos:
             btn = QPushButton(f"{p.nombre}\n{money_str(p.precio_centavos)}\nStock: {p.stock}")
-            # Icono si hay imagen
             img = getattr(p, "imagen_path", None)
             if img:
                 try:
@@ -150,9 +167,10 @@ QHeaderView::section {
                         pix = QPixmap(str(path))
                         if not pix.isNull():
                             btn.setIcon(QIcon(pix))
-                            btn.setIconSize(btn.sizeHint())  # simple
+                            btn.setIconSize(btn.sizeHint())
                 except Exception:
                     pass
+
             btn.setMinimumHeight(90)
             btn.setEnabled(p.stock > 0)
             btn.clicked.connect(lambda checked=False, prod=p: self.add_product(prod))
@@ -186,7 +204,6 @@ QHeaderView::section {
 
         self.lbl_total.setText(f"Total: {money_str(total)}")
 
-
     def sub_one_from_item(self, it: QListWidgetItem):
         pid = int(it.data(Qt.UserRole))
         if pid in self.carrito:
@@ -205,27 +222,33 @@ QHeaderView::section {
             QMessageBox.information(self, "Atención", "No hay productos en el carrito.")
             return
 
-        dlg = CheckoutDialog(total_centavos=total, parent=self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            pago = dlg.pago_centavos
-            try:
-                registrar_venta(self.carrito, pago_centavos=pago)
-            except Exception as e:
-                QMessageBox.critical(self, "Error", str(e))
-                return
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Confirmar cobro")
+        msg.setText("TOTAL A COBRAR")
+        msg.setInformativeText(f"<h1 style='font-size:48px; text-align:center;'>{money_str(total)}</h1>")
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        msg.button(QMessageBox.StandardButton.Ok).setText("Cobrar")
+        msg.button(QMessageBox.StandardButton.Cancel).setText("Cancelar")
 
-            QMessageBox.information(self, "Listo", "Venta registrada.")
-            self.clear_cart()
-            self.load_products()
+        resp = msg.exec()
+        if resp != QMessageBox.StandardButton.Ok:
+            return
 
+        try:
+            registrar_venta(self.carrito, pago_centavos=total)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+            return
+
+        QMessageBox.information(self, "Listo", "Venta registrada.")
+        self.clear_cart()
+        self.load_products()
 
     def open_admin(self):
         dlg = ProductsDialog(self)
         dlg.exec()
         self.load_products()
 
-
-    
     def open_sales_history(self):
         dlg = SalesHistoryDialog(self)
         dlg.exec()

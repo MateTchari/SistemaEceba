@@ -4,13 +4,14 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QMessageBox, QDateEdit
 )
-from PySide6.QtCore import QDate, Qt
+from PySide6.QtCore import QDate
 
-from app.services import listar_ventas, detalle_venta
+from app.services import listar_ventas, detalle_venta, rollback_venta
 
 
 def money_str(centavos: int) -> str:
-    return f"${centavos/100:.2f}".replace(".", ",")
+    pesos = centavos // 100
+    return f"${pesos:,}".replace(",", ".")
 
 
 class SalesHistoryDialog(QDialog):
@@ -41,9 +42,14 @@ class SalesHistoryDialog(QDialog):
         self.btn_search.clicked.connect(self.refresh)
         top.addWidget(self.btn_search)
 
+        # Botón anular venta
+        self.btn_rollback = QPushButton("Anular venta")
+        self.btn_rollback.clicked.connect(self.on_rollback)
+        top.addWidget(self.btn_rollback)
+
         top.addStretch(1)
 
-        self.lbl_total = QLabel("Total del período: $0,00")
+        self.lbl_total = QLabel("Total del período: $0")
         self.lbl_total.setStyleSheet("font-size: 14px; font-weight: 700;")
         top.addWidget(self.lbl_total)
 
@@ -81,12 +87,40 @@ class SalesHistoryDialog(QDialog):
         self.table.resizeColumnsToContents()
         self.lbl_total.setText(f"Total del período: {money_str(total_periodo)}")
 
-    def open_detail(self):
+    def selected_venta_id(self) -> int | None:
         items = self.table.selectedItems()
         if not items:
-            return
+            return None
         row = items[0].row()
-        venta_id = int(self.table.item(row, 0).text())
+        return int(self.table.item(row, 0).text())
+
+    def on_rollback(self):
+        venta_id = self.selected_venta_id()
+        if venta_id is None:
+            QMessageBox.information(self, "Atención", "Seleccioná una venta para anular.")
+            return
+
+        confirm = QMessageBox.question(
+            self,
+            "Anular venta",
+            f"¿Seguro que querés anular la venta #{venta_id}?\n\nEsto devolverá el stock.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            rollback_venta(venta_id)
+            QMessageBox.information(self, "Listo", "Venta anulada y stock repuesto.")
+            self.refresh()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+
+    def open_detail(self, _item):
+        venta_id = self.selected_venta_id()
+        if venta_id is None:
+            return
 
         det = detalle_venta(venta_id)
         if not det:
