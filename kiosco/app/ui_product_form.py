@@ -4,7 +4,8 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QSpinBox,
-    QPushButton, QHBoxLayout, QFileDialog, QMessageBox, QCheckBox, QLabel
+    QPushButton, QHBoxLayout, QFileDialog, QMessageBox, QCheckBox,
+    QLabel, QComboBox
 )
 
 
@@ -31,7 +32,7 @@ class ProductFormDialog(QDialog):
         self.setMinimumWidth(420)
 
         self.result_data = None
-        self._picked_image_path: str | None = None  # ✅ solo si elige una nueva
+        self._picked_image_path: str | None = None
 
         lay = QVBoxLayout(self)
         form = QFormLayout()
@@ -48,11 +49,14 @@ class ProductFormDialog(QDialog):
         self.in_stock.setRange(0, 10_000_000)
         form.addRow("Stock", self.in_stock)
 
+        self.in_categoria = QComboBox()
+        self.in_categoria.addItems(["Bebidas", "Comidas"])
+        form.addRow("Categoría", self.in_categoria)
+
         self.chk_activo = QCheckBox("Activo")
         self.chk_activo.setChecked(True)
         form.addRow("", self.chk_activo)
 
-        # Imagen (solo seleccionar, NO copiar acá)
         img_row = QHBoxLayout()
         self.lbl_imagen = QLabel("(sin imagen)")
         self.lbl_imagen.setStyleSheet("color:#374151;")
@@ -62,7 +66,6 @@ class ProductFormDialog(QDialog):
         img_row.addWidget(self.btn_browse)
         form.addRow("Imagen", img_row)
 
-        # Botones
         btns = QHBoxLayout()
         lay.addLayout(btns)
 
@@ -74,13 +77,17 @@ class ProductFormDialog(QDialog):
         self.btn_ok.clicked.connect(self.on_ok)
         btns.addWidget(self.btn_ok)
 
-        # Cargar datos iniciales si es edición
         self._initial_imagen_path = None
         if initial:
             self.in_nombre.setText(initial.get("nombre", ""))
             self.in_precio.setText(centavos_to_money_str(initial.get("precio_centavos", 0)))
             self.in_stock.setValue(int(initial.get("stock", 0)))
             self.chk_activo.setChecked(bool(initial.get("activo", 1)))
+
+            categoria = initial.get("categoria", "Comidas")
+            idx = self.in_categoria.findText(categoria)
+            if idx >= 0:
+                self.in_categoria.setCurrentIndex(idx)
 
             self._initial_imagen_path = initial.get("imagen_path")
             if self._initial_imagen_path:
@@ -102,13 +109,11 @@ class ProductFormDialog(QDialog):
             nombre = self.in_nombre.text().strip()
             if not nombre:
                 raise ValueError("Nombre vacío.")
+
             precio_centavos = money_to_centavos(self.in_precio.text())
             stock = int(self.in_stock.value())
             activo = 1 if self.chk_activo.isChecked() else 0
-
-            # ✅ clave:
-            # - si eligió imagen nueva => mandamos esa ruta (services la copia a images/)
-            # - si NO eligió => mandamos None para NO pisar la imagen existente
+            categoria = self.in_categoria.currentText()
             imagen_path = self._picked_image_path
 
             self.result_data = {
@@ -116,6 +121,7 @@ class ProductFormDialog(QDialog):
                 "precio_centavos": precio_centavos,
                 "stock": stock,
                 "activo": activo,
+                "categoria": categoria,
                 "imagen_path": imagen_path,
             }
             self.accept()
