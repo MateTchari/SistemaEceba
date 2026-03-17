@@ -329,7 +329,14 @@ def obtener_combo_definicion(combo_id: int) -> dict:
         for g in grupos_rows:
             opciones_rows = conn.execute(
                 """
-                SELECT co.id, co.producto_id, co.cantidad, p.nombre, p.precio_centavos, p.stock
+                SELECT
+                    co.id,
+                    co.producto_id,
+                    co.cantidad,
+                    p.nombre,
+                    p.precio_centavos,
+                    p.stock,
+                    p.imagen_path
                 FROM combo_opciones co
                 JOIN productos p ON p.id = co.producto_id
                 WHERE co.grupo_id=? AND p.activo=1
@@ -338,11 +345,17 @@ def obtener_combo_definicion(combo_id: int) -> dict:
                 (g["id"],),
             ).fetchall()
 
+            opciones = []
+            for r in opciones_rows:
+                d = dict(r)
+                d["imagen_path"] = resolver_imagen_path(d.get("imagen_path"))
+                opciones.append(d)
+
             grupos.append({
                 "id": int(g["id"]),
                 "nombre": g["nombre"],
                 "orden": int(g["orden"]),
-                "opciones": [dict(r) for r in opciones_rows],
+                "opciones": opciones,
             })
 
         combo_dict = dict(combo)

@@ -186,7 +186,7 @@ QListWidget, QTableWidget {
                     except Exception:
                         pass
 
-                btn.setMinimumHeight(90)
+                btn.setMinimumHeight(65)
                 btn.setEnabled(p.stock > 0)
                 btn.clicked.connect(lambda checked=False, prod=p: self.add_product(prod))
                 self.products_grid.addWidget(btn, row, col)

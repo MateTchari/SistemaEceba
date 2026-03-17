@@ -5,7 +5,7 @@ a = Analysis(
     ['kiosco\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[('kiosco\\assets', 'assets')],
+    datas=[('kiosco/assets', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
